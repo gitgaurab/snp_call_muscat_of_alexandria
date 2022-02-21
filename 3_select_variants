@@ -1,0 +1,24 @@
+#!/bin/bash
+#SBATCH --job-name=03_selectVariant         # Job name
+#SBATCH --partition=highmem_p             # Partition (queue) name
+#SBATCH --ntasks=1                    # Run on a single CPU
+#SBATCH --mem=400gb                     # Job memory request
+#SBATCH --time=150:00:00               # Time limit hrs:min:sec
+#SBATCH --output=log_03_selectVariant.%j.out    # Standard output log
+#SBATCH --error=log_03_selectVariant.%j.err     # Standard error log
+
+#SBATCH --mail-type=END,FAIL          # Mail events (NONE, BEGIN, END, FAIL, ALL)
+#SBATCH --mail-user=gb92068@uga.edu  # Where to send mail
+
+cd $SLURM_SUBMIT_DIR
+
+index_tray='/scratch/gb92068/muscadine_snp_calling/muscat_of_alexandra_snp_calling/trayIndex/'
+sam='/scratch/gb92068/muscadine_snp_calling/muscat_of_alexandra_snp_calling/output/samDir/'
+
+
+ml GATK/4.1.6.0-GCCcore-8.3.0-Java-1.8
+
+
+##Select variants
+gatk --java-options "-Xmx64g" SelectVariants -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta -V $sam/raw_variants.vcf -select-type SNP -O $sam/raw_snps.vcf
+gatk --java-options "-Xmx64g" SelectVariants -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta -V $sam/raw_variants.vcf -select-type INDEL -O $sam/raw_indel.vcf
