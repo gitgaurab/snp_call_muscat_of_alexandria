@@ -1,0 +1,135 @@
+#!/bin/bash
+#SBATCH --job-name=filter_recalibrate         # Job name
+#SBATCH --partition=highmem_p             # Partition (queue) name
+#SBATCH --ntasks=1                    # Run on a single CPU
+#SBATCH --mem=400gb                     # Job memory request
+#SBATCH --time=150:00:00               # Time limit hrs:min:sec
+#SBATCH --output=log_filter_recalibrate.%j.out    # Standard output log
+#SBATCH --error=log_filter_recalibrate.%j.err     # Standard error log
+
+#SBATCH --mail-type=END,FAIL          # Mail events (NONE, BEGIN, END, FAIL, ALL)
+#SBATCH --mail-user=gb92068@uga.edu  # Where to send mail
+
+cd $SLURM_SUBMIT_DIR
+
+index_tray='/scratch/gb92068/muscadine_snp_calling/muscat_of_alexandra_snp_calling/trayIndex/'
+fastq='/scratch/gb92068/muscadine_snp_calling/muscat_of_alexandra_snp_calling/paired_fastq/'
+sam='/scratch/gb92068/muscadine_snp_calling/muscat_of_alexandra_snp_calling/output/samDir/'
+
+ml picard/2.16.0-Java-1.8.0_144
+ml SAMtools/1.10-iccifort-2019.5.281
+ml GATK/4.1.6.0-GCCcore-8.3.0-Java-1.8
+
+##Initial filtering
+##SNP file
+#gatk --java-options "-Xmx200g"  VariantFiltration \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -V $sam/raw_snps.vcf \
+        -O $sam/filtered_snps.vcf \
+        -filter-name "QD_filter" -filter "QD < 5.0" \
+        -filter-name "FS_filter" -filter "FS > 60.0" \
+        -filter-name "MQ_filter" -filter "MQ < 40.0" \
+        -filter-name "SOR_filter" -filter "SOR > 4.0" \
+        -filter-name "MQRankSum_filter" -filter "MQRankSum < -12.5" \
+        -filter-name "ReadPosRankSum_filter" -filter "ReadPosRankSum < -8.0"
+
+
+##Indel file
+gatk --java-options "-Xmx200g"  VariantFiltration \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -V $sam/raw_indel.vcf \
+        -O $sam/filtered_indels.vcf \
+        -filter-name "QD_filter" -filter "QD < 2.0" \
+        -filter-name "FS_filter" -filter "FS > 200.0" \
+        -filter-name "SOR_filter" -filter "SOR > 10.0"
+
+
+##Exclude filtered variants
+##SNPs
+#gatk --java-options "-Xmx200g" SelectVariants \
+        --exclude-filtered \
+        -V $sam/filtered_snps.vcf \
+        -O $sam/bqsr_snps.vcf
+
+##INDELS
+gatk --java-options "-Xmx200g"  SelectVariants \
+        --exclude-filtered \
+        -V $sam/filtered_indels.vcf \
+        -O $sam/bqsr_indels.vcf
+
+
+
+##Base quality recalibration (Step 1)
+gatk --java-options "-Xmx200g" BaseRecalibrator \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -I $sam/SRR5891985_amsd.bam \
+        --known-sites $sam/bqsr_snps.vcf \
+        --known-sites $sam/bqsr_indels.vcf \
+        -O $sam/recal_data.table
+
+##Apply BQSR
+gatk --java-options "-Xmx200g" ApplyBQSR \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -I $sam/SRR5891985_amsd.bam \
+        -bqsr $sam/recal_data.table \
+        -O $sam/recal_reads.bam
+
+## Base Quality Score Recalibration (BQSR) #2 (Optional)
+gatk --java-options "-Xmx200g" BaseRecalibrator \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -I $sam/recal_reads.bam \
+        --known-sites $sam/bqsr_snps.vcf \
+        --known-sites $sam/bqsr_indels.vcf \
+        -O $sam/post_recal_data.table
+
+
+##Analyze Covariates
+gatk --java-options "-Xmx200g" AnalyzeCovariates \        
+       -before $sam/recal_data.table \
+        -after $sam/post_recal_data.table \
+        -plots $sam/recalibration_plots.pdf
+
+
+##Call Variants
+gatk --java-options "-Xmx200g" HaplotypeCaller \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -I $sam/recal_reads.bam \
+        -O $sam/raw_variants_recal.vcf
+
+
+##Extract SNPs
+gatk --java-options "-Xmx200g" SelectVariants \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -V $sam/raw_variants_recal.vcf \
+        -select-type SNP \
+        -O $sam/raw_snps_recal.vcf
+
+gatk --java-options "-Xmx200g" SelectVariants \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -V $sam/raw_variants_recal.vcf \
+        -select-type INDEL \
+        -O $sam/raw_indels_recal.vcf
+
+
+##Filter SNPs and INDELS
+
+gatk --java-options "-Xmx200g"  VariantFiltration \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -V $sam/raw_snps_recal.vcf \
+        -O $sam/filtered_snps_final.vcf \
+        -filter-name "QD_filter" -filter "QD < 5.0" \
+        -filter-name "FS_filter" -filter "FS > 60.0" \
+        -filter-name "MQ_filter" -filter "MQ < 40.0" \
+        -filter-name "SOR_filter" -filter "SOR > 4.0" \
+        -filter-name "MQRankSum_filter" -filter "MQRankSum < -12.5" \
+        -filter-name "ReadPosRankSum_filter" -filter "ReadPosRankSum < -8.0"
+
+
+##Indel file
+gatk --java-options "-Xmx200g"  VariantFiltration \
+        -R $index_tray/VITMroTrayshed_v2_0_ChrRenamed.fasta \
+        -V $sam/raw_indels_recal.vcf \
+        -O $sam/filtered_indels_final.vcf \
+        -filter-name "QD_filter" -filter "QD < 2.0" \
+        -filter-name "FS_filter" -filter "FS > 200.0" \
+        -filter-name "SOR_filter" -filter "SOR > 10.0"
